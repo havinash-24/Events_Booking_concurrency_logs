@@ -69,6 +69,8 @@ graph TD
 
 The sequence diagram below shows how the system processes concurrent booking attempts, including handling retries and recovery.
 
+## 🗄️ Database Schema
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -283,19 +285,3 @@ To run the integration tests:
    ```
 
 ---
-
-## 🎓 Interview Talking Points (Backend Engineering Focus)
-
-If you are explaining this project in an interview, be prepared to talk about:
-
-1. **Why not use application-level locking (e.g. Java `synchronized` or `ReentrantLock`)?**
-   * *Answer:* Application-level locking only works if there is a single instance of the application. In a real production environment, the backend is horizontally scaled (running across multiple instances behind a load balancer). JVM locks do not coordinate across different instances. Database-level atomic updates scale across multiple application instances.
-
-2. **Why not use Hibernate's `@Version` (Optimistic Locking)?**
-   * *Answer:* Optimistic locking throws an exception on conflict, requiring the application to catch the exception, retry the transaction, and re-read the seat count. Under extreme load (e.g., 1,000 requests per second on a single event), optimistic locking causes massive transaction rollback rates and degrades performance. Atomic updates handle the seat allocation directly in the DB engine without rollbacks or client-side retries.
-
-3. **How does the Idempotency Recovery Pattern work without double allocation?**
-   * *Answer:* When the concurrent retry request hits the insert statement, Postgres throws a unique key violation. The Spring transaction for *that specific request* rolls back, which automatically reverts any seat deductions that occurred in that transaction. Then, the controller intercepts the error and calls a fresh `Propagation.REQUIRES_NEW` service method. This executes in a completely clean transaction, finds the original booking created by the winning thread, and returns it.
-
-4. **Why use a PostgreSQL Partial Unique Index instead of checking in code?**
-   * *Answer:* Checking in code (`if (bookingRepository.existsByUserIdAndEventIdAndStatusConfirmed())`) is vulnerable to a classic **Time-of-Check to Time-of-Use (TOCTOU)** race condition. Two concurrent threads can both check and find no booking, then both proceed to insert. By delegating the rule to a Postgres partial index, we guarantee safety at the storage engine level.
