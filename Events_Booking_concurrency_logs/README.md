@@ -46,7 +46,6 @@ This system solves these issues at the database and API layer using three primar
   This index guarantees that a user can have at most **one** active booking per event at any given time, while fully supporting historical, cancelled bookings.
 
 ---
-
 ## 📐 System Architecture
 
 ### Component Diagram
@@ -62,16 +61,12 @@ graph TD
     Client -->|REST Requests with Idempotency-Key| Controller
     Controller -->|Delegates to| Service
     Service -->|Uses Spring Data JPA| Repo
-    Repo -->|Executes Native Atomic Queries| DB
+    Repo -->|Executes Atomic SQL Queries| DB
 ```
 
-### Sequence Diagram: Idempotent Booking Flow
+### Sequence Diagram – Idempotent Booking Flow
 
-The sequence diagram below shows how the system processes concurrent booking attempts, including handling retries and recovery.
-
----
-
-## 🗄️ Database Schema
+The following sequence diagram illustrates how the system handles booking requests, concurrent retries, and automatic recovery using idempotency.
 
 ```mermaid
 sequenceDiagram
@@ -81,46 +76,46 @@ sequenceDiagram
     participant Service as BookingService
     participant DB as PostgreSQL
 
-    Client->>Controller: POST /bookings (Idempotency-Key: "key-123")
-    Controller->>Service: createBooking("key-123", Request)
-    
-    rect rgb(240, 248, 255)
-        Note over Service, DB: 1. Attempt Atomic Seat Reservation
-        Service->>DB: UPDATE events SET seats = seats-1 WHERE id=? AND seats>0
-        DB-->>Service: Return updated seats (e.g. 9)
+    Client->>Controller: POST /bookings (Idempotency-Key: key-123)
+    Controller->>Service: createBooking(key-123, request)
+
+    rect rgb(240,248,255)
+        Note over Service,DB: Attempt atomic seat reservation
+        Service->>DB: UPDATE events SET available_seats = available_seats - 1 WHERE id=? AND available_seats>0
+        DB-->>Service: Seat reserved
     end
 
-    rect rgb(255, 240, 245)
-        Note over Service, DB: 2. Attempt Booking Record Creation
-        Service->>DB: INSERT INTO bookings (idempotency_key, status) VALUES ("key-123", 'CONFIRMED')
-        DB-->>Service: Commit Successful
+    rect rgb(255,240,245)
+        Note over Service,DB: Create booking
+        Service->>DB: INSERT booking (idempotency_key)
+        DB-->>Service: Success
     end
-    
-    Service-->>Controller: Return BookingResponse
-    Controller-->>Client: 201 Created (Booking details)
 
-    Note over Client, Controller: --- CONCURRENT RETRY SCENARIO ---
-    
-    Client->>Controller: POST /bookings (Idempotency-Key: "key-123") [Concurrent Retry]
-    Controller->>Service: createBooking("key-123", Request)
-    Service->>DB: UPDATE events SET seats = seats-1 WHERE id=? AND seats>0
-    DB-->>Service: Return updated seats (e.g. 8)
-    Service->>DB: INSERT INTO bookings (idempotency_key) VALUES ("key-123")
-    DB-->>Service: THROW UniqueConstraintViolation!
-    Note over Service: Transaction Rolls Back<br/>(Seat Reservation is Automatically Refunded!)
-    Service-->>Controller: Rethrow DataIntegrityViolationException
-    
-    rect rgb(230, 250, 230)
-        Note over Controller, Service: 3. Recovery Path
-        Controller->>Service: recoverExistingBooking("key-123") [REQUIRES_NEW]
-        Service->>DB: SELECT * FROM bookings WHERE idempotency_key = "key-123"
-        DB-->>Service: Return original booking row
-        Service-->>Controller: Return BookingResponse
-    end
-    Controller-->>Client: 200 OK (Original booking details)
+    Service-->>Controller: BookingResponse
+    Controller-->>Client: 201 Created
+
+    Note over Client,Controller: Concurrent retry with same Idempotency-Key
+
+    Client->>Controller: POST /bookings
+    Controller->>Service: createBooking(key-123)
+
+    Service->>DB: UPDATE events...
+    DB-->>Service: Seat reserved
+
+    Service->>DB: INSERT booking
+    DB-->>Service: UniqueConstraintViolation
+
+    Note over Service: Transaction rolls back automatically
+
+    Controller->>Service: recoverExistingBooking(key-123)
+    Service->>DB: SELECT booking by idempotency_key
+    DB-->>Service: Existing booking
+    Service-->>Controller: BookingResponse
+    Controller-->>Client: 200 OK
 ```
 
----
+
+## 🗄️ Database Schema
 
 ```mermaid
 erDiagram
@@ -144,21 +139,28 @@ erDiagram
 
     events ||--o{ bookings : has
 ```
-**Constraints**
 
-### events
-- `name` — NOT NULL
-- `total_seats` — NOT NULL
-- `available_seats` — NOT NULL
-- `created_at` — NOT NULL
+### Constraints
 
-### bookings
-- `event_id` — Foreign Key → `events.id`
-- `user_id` — NOT NULL
-- `status` — `CONFIRMED` or `CANCELLED`
-- `idempotency_key` — UNIQUE, nullable
-- `created_at` — NOT NULL
-- `cancelled_at` — nullable
+#### `events`
+
+| Column | Constraint |
+|--------|------------|
+| `name` | NOT NULL |
+| `total_seats` | NOT NULL |
+| `available_seats` | NOT NULL |
+| `created_at` | NOT NULL |
+
+#### `bookings`
+
+| Column | Constraint |
+|--------|------------|
+| `event_id` | Foreign Key → `events.id` |
+| `user_id` | NOT NULL |
+| `status` | `CONFIRMED` or `CANCELLED` |
+| `idempotency_key` | UNIQUE, Nullable |
+| `created_at` | NOT NULL |
+| `cancelled_at` | Nullable |
 
 ### Essential DDL
 While Hibernate automatically generates the tables from `@Entity` mappings, the following **PostgreSQL-specific DDL** must be applied to enforce the partial unique constraint and avoid application-level race conditions:
