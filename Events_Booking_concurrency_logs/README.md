@@ -118,32 +118,43 @@ sequenceDiagram
 
 ---
 
-## 🗄️ Database Schema
-
-The database model is kept lightweight and highly optimized.
-
 ```mermaid
 erDiagram
     events {
         bigint id PK
-        varchar name "Not Null"
-        int total_seats "Not Null"
-        int available_seats "Not Null"
-        timestamp created_at "Not Null"
+        varchar name
+        int total_seats
+        int available_seats
+        timestamp created_at
     }
 
     bookings {
         bigint id PK
-        bigint event_id FK "Not Null"
-        bigint user_id "Not Null"
-        varchar status "CONFIRMED, CANCELLED"
-        varchar idempotency_key UNIQUE "Nullable"
-        timestamp created_at "Not Null"
-        timestamp cancelled_at "Nullable"
+        bigint event_id FK
+        bigint user_id
+        varchar status
+        varchar idempotency_key
+        timestamp created_at
+        timestamp cancelled_at
     }
 
-    events ||--o{ bookings : "has"
+    events ||--o{ bookings : has
 ```
+**Constraints**
+
+### events
+- `name` — NOT NULL
+- `total_seats` — NOT NULL
+- `available_seats` — NOT NULL
+- `created_at` — NOT NULL
+
+### bookings
+- `event_id` — Foreign Key → `events.id`
+- `user_id` — NOT NULL
+- `status` — `CONFIRMED` or `CANCELLED`
+- `idempotency_key` — UNIQUE, nullable
+- `created_at` — NOT NULL
+- `cancelled_at` — nullable
 
 ### Essential DDL
 While Hibernate automatically generates the tables from `@Entity` mappings, the following **PostgreSQL-specific DDL** must be applied to enforce the partial unique constraint and avoid application-level race conditions:
