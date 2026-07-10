@@ -69,6 +69,8 @@ graph TD
 
 The sequence diagram below shows how the system processes concurrent booking attempts, including handling retries and recovery.
 
+---
+
 ## 🗄️ Database Schema
 
 ```mermaid
